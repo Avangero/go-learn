@@ -1,0 +1,14 @@
+services:
+  task-service:
+    build:
+      context: ./services/task-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      # Монтируем локальную директорию с кодом в рабочую директорию контейнера.
+      # Все изменения, которые вы делаете локально в ./services/task-service,
+      # будут мгновенно отражены внутри контейнера в /app.
+      - ./services/task-service:/app
+    environment:
+      - PORT=8080 
