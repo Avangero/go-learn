@@ -1,5 +1,9 @@
 package lang
 
+import (
+	"fmt"
+)
+
 // MessageKey представляет ключ сообщения
 type MessageKey string
 
@@ -30,6 +34,49 @@ const (
 	ValidationEmailInvalid  MessageKey = "validation.email.invalid"
 	ValidationPasswordMin   MessageKey = "validation.password.min"
 	ValidationRoleInvalid   MessageKey = "validation.role.invalid"
+
+	// Logging messages - Handler level
+	LogRegistrationRequest MessageKey = "log.registration.request"
+	LogLoginRequest        MessageKey = "log.login.request"
+	LogValidationFailed    MessageKey = "log.validation.failed"
+	LogRegistrationFailed  MessageKey = "log.registration.failed"
+	LogRegistrationSuccess MessageKey = "log.registration.success"
+	LogLoginFailed         MessageKey = "log.login.failed"
+	LogLoginSuccess        MessageKey = "log.login.success"
+	LogGetMeFailed         MessageKey = "log.getme.failed"
+	LogGetMeSuccess        MessageKey = "log.getme.success"
+	LogParseRequestFailed  MessageKey = "log.parse.request.failed"
+
+	// Logging messages - Service level
+	LogAttemptingRegistration MessageKey = "log.service.attempting.registration"
+	LogCheckEmailExists       MessageKey = "log.service.check.email.exists"
+	LogEmailAlreadyExists     MessageKey = "log.service.email.already.exists"
+	LogPasswordHashError      MessageKey = "log.service.password.hash.error"
+	LogUserCreateError        MessageKey = "log.service.user.create.error"
+	LogJWTGenerateError       MessageKey = "log.service.jwt.generate.error"
+	LogRegistrationComplete   MessageKey = "log.service.registration.complete"
+	LogAttemptingLogin        MessageKey = "log.service.attempting.login"
+	LogDatabaseErrorLogin     MessageKey = "log.service.database.error.login"
+	LogUserNotFoundLogin      MessageKey = "log.service.user.not.found.login"
+	LogInvalidPassword        MessageKey = "log.service.invalid.password"
+	LogLoginComplete          MessageKey = "log.service.login.complete"
+	LogJWTParseError          MessageKey = "log.service.jwt.parse.error"
+	LogJWTInvalid             MessageKey = "log.service.jwt.invalid"
+	LogUserFetchError         MessageKey = "log.service.user.fetch.error"
+	LogUserNotFoundValidation MessageKey = "log.service.user.not.found.validation"
+
+	// Logging messages - Repository level
+	LogUserCreateSuccess MessageKey = "log.repo.user.create.success"
+	LogUserCreateFailed  MessageKey = "log.repo.user.create.failed"
+	LogUserNotFoundRepo  MessageKey = "log.repo.user.not.found"
+	LogDatabaseError     MessageKey = "log.repo.database.error"
+	LogEmailExistsCheck  MessageKey = "log.repo.email.exists.check"
+
+	// Logging messages - Middleware level
+	LogJWTMissingHeader     MessageKey = "log.jwt.missing.header"
+	LogJWTInvalidFormat     MessageKey = "log.jwt.invalid.format"
+	LogJWTValidationFailed  MessageKey = "log.jwt.validation.failed"
+	LogJWTValidationSuccess MessageKey = "log.jwt.validation.success"
 )
 
 // Messages интерфейс для получения сообщений
@@ -52,8 +99,8 @@ func NewMessageProvider(messages map[MessageKey]string) *MessageProvider {
 func (m *MessageProvider) Get(key MessageKey, args ...interface{}) string {
 	if msg, exists := m.messages[key]; exists {
 		if len(args) > 0 {
-			// Простое форматирование - можно расширить через fmt.Sprintf
-			return msg
+			// Используем fmt.Sprintf для форматирования
+			return fmt.Sprintf(msg, args...)
 		}
 		return msg
 	}

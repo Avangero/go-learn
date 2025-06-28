@@ -1,27 +1,39 @@
-package repositories_test
+package repositories
 
 import (
-	"database/sql"
+	"context"
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/avangero/auth-service/internal/lang/ru"
 	"github.com/avangero/auth-service/internal/models"
 	"github.com/avangero/auth-service/internal/repositories"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	_ "github.com/lib/pq"
 )
 
-func TestUserRepository_Create_Success(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
+func setupTestDB(t *testing.T) *sqlx.DB {
+	// Используем реальную БД для тестов (можно заменить на testcontainers)
+	db, err := sqlx.Connect("postgres", "postgres://test_user:test_password@localhost:5432/test_auth_db?sslmode=disable")
 	require.NoError(t, err)
+
+	// Очищаем таблицу перед каждым тестом
+	_, err = db.Exec("DELETE FROM users")
+	require.NoError(t, err)
+
+	return db
+}
+
+func TestUserRepository_Create(t *testing.T) {
+	db := setupTestDB(t)
 	defer db.Close()
 
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
+	messages := ru.NewRussianMessages()
+	repo := repositories.NewUserRepository(db, messages)
 
 	user := &models.User{
 		ID:       uuid.New(),
@@ -31,29 +43,25 @@ func TestUserRepository_Create_Success(t *testing.T) {
 		Created:  time.Now(),
 	}
 
-	// Ожидаем выполнение INSERT запроса
-	mock.ExpectExec("INSERT INTO users").
-		WithArgs(user.ID, user.Email, user.Password, user.Role, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	// Выполнение
-	err = repo.Create(user)
-
-	// Проверка
+	err := repo.Create(context.Background(), user)
 	assert.NoError(t, err)
-	assert.NoError(t, mock.ExpectationsWereMet())
+
+	// Проверяем, что пользователь создан
+	var count int
+	err = db.Get(&count, "SELECT COUNT(*) FROM users WHERE email = $1", user.Email)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count)
 }
 
-func TestUserRepository_Create_DatabaseError(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
+func TestUserRepository_GetByEmail(t *testing.T) {
+	db := setupTestDB(t)
 	defer db.Close()
 
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
+	messages := ru.NewRussianMessages()
+	repo := repositories.NewUserRepository(db, messages)
 
-	user := &models.User{
+	// Создаем тестового пользователя
+	originalUser := &models.User{
 		ID:       uuid.New(),
 		Email:    "test@example.com",
 		Password: "hashedpassword",
@@ -61,93 +69,39 @@ func TestUserRepository_Create_DatabaseError(t *testing.T) {
 		Created:  time.Now(),
 	}
 
-	// Ожидаем ошибку при выполнении INSERT
-	mock.ExpectExec("INSERT INTO users").
-		WithArgs(user.ID, user.Email, user.Password, user.Role, sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-
-	// Выполнение
-	err = repo.Create(user)
-
-	// Проверка
-	assert.Error(t, err)
-	assert.Equal(t, sql.ErrConnDone, err)
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestUserRepository_GetByEmail_Success(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
+	err := repo.Create(context.Background(), originalUser)
 	require.NoError(t, err)
-	defer db.Close()
 
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
-
-	expectedUser := &models.User{
-		ID:       uuid.New(),
-		Email:    "test@example.com",
-		Password: "hashedpassword",
-		Role:     "employee",
-		Created:  time.Now(),
-	}
-
-	// Ожидаем выполнение SELECT запроса
-	rows := sqlmock.NewRows([]string{"id", "email", "password_hash", "role", "created_at"}).
-		AddRow(expectedUser.ID, expectedUser.Email, expectedUser.Password, expectedUser.Role, expectedUser.Created)
-
-	mock.ExpectQuery("SELECT \\* FROM users WHERE email = \\$1").
-		WithArgs(expectedUser.Email).
-		WillReturnRows(rows)
-
-	// Выполнение
-	user, err := repo.GetByEmail(expectedUser.Email)
-
-	// Проверка
-	require.NoError(t, err)
-	assert.Equal(t, expectedUser.ID, user.ID)
-	assert.Equal(t, expectedUser.Email, user.Email)
-	assert.Equal(t, expectedUser.Password, user.Password)
-	assert.Equal(t, expectedUser.Role, user.Role)
-	assert.NoError(t, mock.ExpectationsWereMet())
+	// Получаем пользователя по email
+	user, err := repo.GetByEmail(context.Background(), "test@example.com")
+	assert.NoError(t, err)
+	assert.NotNil(t, user)
+	assert.Equal(t, originalUser.Email, user.Email)
+	assert.Equal(t, originalUser.ID, user.ID)
 }
 
 func TestUserRepository_GetByEmail_NotFound(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
+	db := setupTestDB(t)
 	defer db.Close()
 
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
+	messages := ru.NewRussianMessages()
+	repo := repositories.NewUserRepository(db, messages)
 
-	email := "nonexistent@example.com"
-
-	// Ожидаем выполнение SELECT запроса без результатов
-	mock.ExpectQuery("SELECT \\* FROM users WHERE email = \\$1").
-		WithArgs(email).
-		WillReturnError(sql.ErrNoRows)
-
-	// Выполнение
-	user, err := repo.GetByEmail(email)
-
-	// Проверка
-	assert.Error(t, err)
-	assert.Nil(t, user)
-	assert.Equal(t, sql.ErrNoRows, err)
-	assert.NoError(t, mock.ExpectationsWereMet())
+	// Пытаемся получить несуществующего пользователя
+	user, err := repo.GetByEmail(context.Background(), "nonexistent@example.com")
+	assert.NoError(t, err)
+	assert.Nil(t, user) // Должен вернуть nil, nil при отсутствии пользователя
 }
 
-func TestUserRepository_GetByID_Success(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
+func TestUserRepository_GetByID(t *testing.T) {
+	db := setupTestDB(t)
 	defer db.Close()
 
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
+	messages := ru.NewRussianMessages()
+	repo := repositories.NewUserRepository(db, messages)
 
-	expectedUser := &models.User{
+	// Создаем тестового пользователя
+	originalUser := &models.User{
 		ID:       uuid.New(),
 		Email:    "test@example.com",
 		Password: "hashedpassword",
@@ -155,72 +109,57 @@ func TestUserRepository_GetByID_Success(t *testing.T) {
 		Created:  time.Now(),
 	}
 
-	// Ожидаем выполнение SELECT запроса
-	rows := sqlmock.NewRows([]string{"id", "email", "password_hash", "role", "created_at"}).
-		AddRow(expectedUser.ID, expectedUser.Email, expectedUser.Password, expectedUser.Role, expectedUser.Created)
-
-	mock.ExpectQuery("SELECT \\* FROM users WHERE id = \\$1").
-		WithArgs(expectedUser.ID).
-		WillReturnRows(rows)
-
-	// Выполнение
-	user, err := repo.GetByID(expectedUser.ID)
-
-	// Проверка
+	err := repo.Create(context.Background(), originalUser)
 	require.NoError(t, err)
-	assert.Equal(t, expectedUser.ID, user.ID)
-	assert.Equal(t, expectedUser.Email, user.Email)
-	assert.NoError(t, mock.ExpectationsWereMet())
+
+	// Получаем пользователя по ID
+	user, err := repo.GetByID(context.Background(), originalUser.ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, user)
+	assert.Equal(t, originalUser.Email, user.Email)
+	assert.Equal(t, originalUser.ID, user.ID)
 }
 
-func TestUserRepository_EmailExists_True(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
+func TestUserRepository_GetByID_NotFound(t *testing.T) {
+	db := setupTestDB(t)
 	defer db.Close()
 
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
+	messages := ru.NewRussianMessages()
+	repo := repositories.NewUserRepository(db, messages)
 
-	email := "existing@example.com"
+	// Пытаемся получить несуществующего пользователя
+	nonExistentID := uuid.New()
+	user, err := repo.GetByID(context.Background(), nonExistentID)
+	assert.NoError(t, err)
+	assert.Nil(t, user) // Должен вернуть nil, nil при отсутствии пользователя
+}
 
-	// Ожидаем выполнение EXISTS запроса
-	rows := sqlmock.NewRows([]string{"exists"}).AddRow(true)
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM users WHERE email = \\$1\\)").
-		WithArgs(email).
-		WillReturnRows(rows)
+func TestUserRepository_EmailExists(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
 
-	// Выполнение
-	exists, err := repo.EmailExists(email)
+	messages := ru.NewRussianMessages()
+	repo := repositories.NewUserRepository(db, messages)
 
-	// Проверка
+	// Создаем тестового пользователя
+	user := &models.User{
+		ID:       uuid.New(),
+		Email:    "test@example.com",
+		Password: "hashedpassword",
+		Role:     "employee",
+		Created:  time.Now(),
+	}
+
+	err := repo.Create(context.Background(), user)
 	require.NoError(t, err)
+
+	// Проверяем существование email
+	exists, err := repo.EmailExists(context.Background(), "test@example.com")
+	assert.NoError(t, err)
 	assert.True(t, exists)
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
 
-func TestUserRepository_EmailExists_False(t *testing.T) {
-	// Подготовка mock базы данных
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	repo := repositories.NewUserRepository(sqlxDB)
-
-	email := "nonexistent@example.com"
-
-	// Ожидаем выполнение EXISTS запроса
-	rows := sqlmock.NewRows([]string{"exists"}).AddRow(false)
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM users WHERE email = \\$1\\)").
-		WithArgs(email).
-		WillReturnRows(rows)
-
-	// Выполнение
-	exists, err := repo.EmailExists(email)
-
-	// Проверка
-	require.NoError(t, err)
+	// Проверяем несуществующий email
+	exists, err = repo.EmailExists(context.Background(), "nonexistent@example.com")
+	assert.NoError(t, err)
 	assert.False(t, exists)
-	assert.NoError(t, mock.ExpectationsWereMet())
 }

@@ -1,10 +1,10 @@
 package middleware
 
 import (
+	"log"
 	"strings"
 
 	"github.com/avangero/auth-service/internal/lang"
-	"github.com/avangero/auth-service/internal/models/responses"
 	"github.com/avangero/auth-service/internal/services"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -13,32 +13,41 @@ import (
 // JWTMiddleware создает middleware для проверки JWT токенов
 func JWTMiddleware(authService services.AuthService, messages lang.Messages) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Получаем токен из заголовка Authorization
+		clientIP := c.IP()
+
+		// Получаем заголовок Authorization
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
-			return c.Status(fiber.StatusUnauthorized).JSON(responses.ErrorResponse{
-				Error: messages.Get(lang.TokenNotProvided),
+			log.Printf(messages.Get(lang.LogJWTMissingHeader), clientIP)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": messages.Get(lang.TokenNotProvided),
 			})
 		}
 
 		// Проверяем формат "Bearer <token>"
-		tokenParts := strings.Split(authHeader, " ")
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			return c.Status(fiber.StatusUnauthorized).JSON(responses.ErrorResponse{
-				Error: messages.Get(lang.TokenInvalid),
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			log.Printf(messages.Get(lang.LogJWTInvalidFormat), clientIP)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": messages.Get(lang.TokenInvalid),
 			})
 		}
 
-		// Валидируем токен
-		user, err := authService.ValidateToken(tokenParts[1])
+		tokenString := parts[1]
+
+		// Валидируем токен через AuthService
+		user, err := authService.ValidateToken(c.Context(), tokenString)
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(responses.ErrorResponse{
-				Error: messages.Get(lang.TokenInvalid),
+			log.Printf(messages.Get(lang.LogJWTValidationFailed), clientIP, err)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": messages.Get(lang.TokenInvalid),
 			})
 		}
 
-		// Сохраняем пользователя в контексте
+		// Сохраняем пользователя в контексте для использования в handlers
 		c.Locals("user", user)
+		log.Printf(messages.Get(lang.LogJWTValidationSuccess), clientIP, user.Email)
+
 		return c.Next()
 	}
 }

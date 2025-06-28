@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"log"
+
 	"github.com/avangero/auth-service/internal/lang"
 	"github.com/avangero/auth-service/internal/models"
 	"github.com/avangero/auth-service/internal/models/requests"
@@ -37,85 +39,103 @@ func (h *AuthHandler) GetStatus(c *fiber.Ctx) error {
 
 // Register регистрирует нового пользователя
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
+	clientIP := c.IP()
+	log.Printf(h.messages.Get(lang.LogRegistrationRequest), clientIP)
+
 	var req requests.RegisterRequest
-
-	// Парсим JSON запрос
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(responses.ErrorResponse{
-			Error: h.messages.Get(lang.InvalidRequestFormat),
+		log.Printf(h.messages.Get(lang.LogParseRequestFailed), clientIP, err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": h.messages.Get(lang.InvalidRequestFormat),
 		})
 	}
 
-	// Валидируем данные
+	// Валидация
 	if err := h.validator.Validate(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(responses.ErrorResponse{
-			Error: err.Error(),
+		log.Printf(h.messages.Get(lang.LogValidationFailed), clientIP, err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   h.messages.Get(lang.InvalidRequestFormat),
+			"details": err.Error(),
 		})
 	}
 
-	// Регистрируем пользователя
-	tokenResponse, err := h.authService.Register(&req)
+	// Регистрация
+	response, err := h.authService.Register(c.Context(), &req)
 	if err != nil {
-		return c.Status(fiber.StatusConflict).JSON(responses.ErrorResponse{
-			Error: err.Error(),
+		log.Printf(h.messages.Get(lang.LogRegistrationFailed), clientIP, err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
 		})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(tokenResponse)
+	log.Printf(h.messages.Get(lang.LogRegistrationSuccess), clientIP, req.Email)
+	return c.JSON(response)
 }
 
 // Login аутентифицирует пользователя
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
+	clientIP := c.IP()
+	log.Printf(h.messages.Get(lang.LogLoginRequest), clientIP)
+
 	var req requests.LoginRequest
-
-	// Парсим JSON запрос
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(responses.ErrorResponse{
-			Error: h.messages.Get(lang.InvalidRequestFormat),
+		log.Printf(h.messages.Get(lang.LogParseRequestFailed), clientIP, err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": h.messages.Get(lang.InvalidRequestFormat),
 		})
 	}
 
-	// Валидируем данные
+	// Валидация
 	if err := h.validator.Validate(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(responses.ErrorResponse{
-			Error: err.Error(),
+		log.Printf(h.messages.Get(lang.LogValidationFailed), clientIP, err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   h.messages.Get(lang.InvalidRequestFormat),
+			"details": err.Error(),
 		})
 	}
 
-	// Аутентифицируем пользователя
-	tokenResponse, err := h.authService.Login(&req)
+	// Аутентификация
+	response, err := h.authService.Login(c.Context(), &req)
 	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(responses.ErrorResponse{
-			Error: err.Error(),
+		log.Printf(h.messages.Get(lang.LogLoginFailed), clientIP, err)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": err.Error(),
 		})
 	}
 
-	return c.JSON(tokenResponse)
+	log.Printf(h.messages.Get(lang.LogLoginSuccess), clientIP, req.Email)
+	return c.JSON(response)
 }
 
 // GetMe возвращает информацию о текущем пользователе
 func (h *AuthHandler) GetMe(c *fiber.Ctx) error {
-	// Получаем пользователя из контекста (установлен в middleware)
-	user, ok := c.Locals("user").(*models.User)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(responses.ErrorResponse{
-			Error: h.messages.Get(lang.TokenInvalid),
+	clientIP := c.IP()
+	user := c.Locals("user")
+	if user == nil {
+		log.Printf(h.messages.Get(lang.LogGetMeFailed), clientIP)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": h.messages.Get(lang.UserNotFound),
 		})
 	}
 
+	log.Printf(h.messages.Get(lang.LogGetMeSuccess), clientIP, user.(*models.User).Email)
 	return c.JSON(user)
 }
 
 // ValidateToken валидирует JWT токен
 func (h *AuthHandler) ValidateToken(c *fiber.Ctx) error {
+	clientIP := c.IP()
+
 	// Получаем пользователя из контекста (установлен в middleware)
 	user, ok := c.Locals("user").(*models.User)
 	if !ok {
+		log.Printf("Token validation failed: user not found in context from IP %s", clientIP)
 		return c.Status(fiber.StatusUnauthorized).JSON(responses.ErrorResponse{
 			Error: h.messages.Get(lang.TokenInvalid),
 		})
 	}
 
+	log.Printf("Token validation successful for IP %s, user: %s", clientIP, user.Email)
 	return c.JSON(responses.ValidationResponse{
 		Valid: true,
 		User:  *user,

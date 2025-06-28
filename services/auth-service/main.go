@@ -30,8 +30,8 @@ func main() {
 	db := connectionManager.Connect(cfg)
 
 	// Инициализация слоев приложения (Dependency Injection)
-	userRepo := repositories.NewUserRepository(db)
-	authService := services.NewAuthService(userRepo, cfg.JWT.Secret, cfg.BCryptCost)
+	userRepo := repositories.NewUserRepository(db, messages)
+	authService := services.NewAuthService(userRepo, cfg.JWT.Secret, cfg.BCryptCost, messages)
 
 	// Создание Fiber приложения
 	app := fiber.New(fiber.Config{
