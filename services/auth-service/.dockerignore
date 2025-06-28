@@ -1,0 +1,14 @@
+# Исключаем файлы контроля версий
+.git
+.gitignore
+
+# Исключаем настройки IDE
+.idea
+*.iml
+
+# Исключаем локальные файлы окружения
+.env
+
+# Docker файлы
+Dockerfile
+.dockerignore 
