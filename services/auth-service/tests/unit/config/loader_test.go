@@ -103,3 +103,53 @@ func TestLoader_Load_BCryptCostOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+func TestLoader_Load_DatabaseURL_Success(t *testing.T) {
+	// Подготовка
+	os.Setenv("JWT_SECRET", "test-secret-key")
+	os.Setenv("DATABASE_URL", "postgres://testuser:testpass@testhost:5433/testdb")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("DATABASE_URL")
+	}()
+
+	messages := ru.NewRussianMessages()
+	loader := config.NewLoader(messages)
+
+	// Выполнение
+	cfg, err := loader.Load()
+
+	// Проверка
+	require.NoError(t, err)
+	assert.Equal(t, "testhost", cfg.Database.Host)
+	assert.Equal(t, "5433", cfg.Database.Port)
+	assert.Equal(t, "testuser", cfg.Database.User)
+	assert.Equal(t, "testpass", cfg.Database.Password)
+	assert.Equal(t, "testdb", cfg.Database.Name)
+}
+
+func TestLoader_Load_DatabaseURL_Priority(t *testing.T) {
+	// Подготовка - DATABASE_URL должен иметь приоритет над отдельными переменными
+	os.Setenv("JWT_SECRET", "test-secret-key")
+	os.Setenv("DATABASE_URL", "postgres://urluser:urlpass@urlhost:5433/urldb")
+	os.Setenv("DB_HOST", "separatehost")
+	os.Setenv("DB_USER", "separateuser")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("DATABASE_URL")
+		os.Unsetenv("DB_HOST")
+		os.Unsetenv("DB_USER")
+	}()
+
+	messages := ru.NewRussianMessages()
+	loader := config.NewLoader(messages)
+
+	// Выполнение
+	cfg, err := loader.Load()
+
+	// Проверка - должны использоваться значения из DATABASE_URL
+	require.NoError(t, err)
+	assert.Equal(t, "urlhost", cfg.Database.Host)
+	assert.Equal(t, "urluser", cfg.Database.User)
+	assert.Equal(t, "urldb", cfg.Database.Name)
+}
