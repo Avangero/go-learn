@@ -1,0 +1,236 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Определяем какие сервисы изменились
+  detect-changes:
+    runs-on: ubuntu-latest  
+    outputs:
+      auth-service: ${{ steps.changes.outputs.auth-service }}
+      user-service: ${{ steps.changes.outputs.user-service }}
+      course-service: ${{ steps.changes.outputs.course-service }}
+      web-app: ${{ steps.changes.outputs.web-app }}
+      mobile-app: ${{ steps.changes.outputs.mobile-app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            auth-service:
+              - 'services/auth-service/**'
+            user-service:
+              - 'services/user-service/**'
+            course-service:
+              - 'services/course-service/**'
+            web-app:
+              - 'clients/web-app/**'
+            mobile-app:
+              - 'clients/mobile-app/**'
+
+  # Тестирование Go сервисов
+  test-services:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    strategy:
+      matrix:
+        service: [auth-service, user-service, course-service]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Go
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+          
+      - name: Cache Go modules  
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          
+      - name: Run tests
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        run: |
+          cd services/${{ matrix.service }}
+          go test -v -race -coverprofile=coverage.out ./...
+          go tool cover -html=coverage.out -o coverage.html
+          
+      - name: Upload coverage reports
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        uses: codecov/codecov-action@v3
+        with:
+          file: services/${{ matrix.service }}/coverage.out
+          flags: ${{ matrix.service }}
+
+  # Тестирование React приложения
+  test-web-app:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.web-app == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: clients/web-app/package-lock.json
+          
+      - name: Install dependencies
+        run: |
+          cd clients/web-app
+          npm ci
+          
+      - name: Run tests
+        run: |
+          cd clients/web-app
+          npm run test -- --coverage --watchAll=false
+          
+      - name: Run build
+        run: |
+          cd clients/web-app
+          npm run build
+
+  # Тестирование Flutter приложения
+  test-mobile-app:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.mobile-app == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.16.0'
+          
+      - name: Get dependencies
+        run: |
+          cd clients/mobile-app
+          flutter pub get
+          
+      - name: Run tests
+        run: |
+          cd clients/mobile-app
+          flutter test
+          
+      - name: Build APK
+        run: |
+          cd clients/mobile-app
+          flutter build apk --debug
+
+  # Сборка и деплой Docker образов
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-services, test-web-app, test-mobile-app]
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        service: [auth-service, user-service, course-service]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Log in to Container Registry
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            
+      - name: Build and push Docker image
+        if: ${{ needs.detect-changes.outputs[matrix.service] == 'true' }}
+        uses: docker/build-push-action@v4
+        with:
+          context: services/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # Деплой web приложения
+  deploy-web-app:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-web-app]
+    if: github.ref == 'refs/heads/main' && needs.detect-changes.outputs.web-app == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: clients/web-app/package-lock.json
+          
+      - name: Build
+        run: |
+          cd clients/web-app
+          npm ci
+          npm run build
+          
+      - name: Deploy to staging
+        run: |
+          echo "Deploying web app to staging environment"
+          # Здесь будет реальный деплой (S3, Netlify, Vercel, etc.)
+
+  # Интеграционные тесты
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [test-services]
+    if: github.event_name == 'pull_request'
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+          
+      - name: Run integration tests
+        run: |
+          # Запуск всех сервисов через docker-compose
+          docker-compose -f docker-compose.test.yml up -d
+          
+          # Ожидание готовности сервисов
+          sleep 30
+          
+          # Запуск интеграционных тестов
+          go test -v ./tests/integration/...
+          
+          # Очистка
+          docker-compose -f docker-compose.test.yml down 
